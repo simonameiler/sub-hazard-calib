@@ -27,14 +27,19 @@ description: Functions for tropical cyclone (TC) impact function calibration.
 
 import os
 import numpy as np
+from numpy import isinf
 import pandas as pd
 from scipy import stats
-from iso3166 import countries as iso_cntry
+
+import sys
+sys.path.append("/Users/simonameiler/Documents/WCR/Scripts/sub-hazard_calib")
+#from iso3166 import countries as iso_cntry
 # from cartopy.io import shapereader
 import matplotlib.pyplot as plt
 import climada.util.plot as u_plot
+import climada.util.coordinates as u_coord
 
-from climada.engine import Impact
+from climada.engine import ImpactCalc, Impact
 from climada.entity.exposures.litpop import LitPop
 from climada.entity import IFTropCyclone, ImpactFuncSet
 from climada.hazard import Centroids, Hazard
@@ -51,7 +56,7 @@ from impact_data_stable_202006 import emdat_countries_by_hazard, \
     emdat_impact_event, emdat_to_impact, emdat_df_load # stable version
 
 from tc_calibration_config import REF_YEAR, RES_ARCSEC, \
-    YEAR_RANGE, ENTITY_DIR, ENTITY_STR, HAZ, EMDAT_CSV, \
+    YEAR_RANGE, HAZ, EMDAT_CSV, \
     dist_cst_lim, regions_short
 
 
@@ -59,7 +64,7 @@ from tc_calibration_config import REF_YEAR, RES_ARCSEC, \
 def prepare_calib_data(sub_haz='wind'):
 
     print("----------------------Loading Exposure----------------------")
-    exposure = LitPop.from_hdf5(SYSTEM_DIR/"litpop_0300as_2014_global.hdf5") 
+    exposure = LitPop.from_hdf5(SYSTEM_DIR/"litpop_0300as_2014_calib_global.hdf5") 
 
     # init TC hazard:
     print("----------------------Loading Hazard------------------------")
@@ -72,7 +77,16 @@ def prepare_calib_data(sub_haz='wind'):
         track, csv = track.split('.')
         tracks.append(track)
         hazard.event_name = tracks
-
+    
+    # correct a few IBTrACS IDs
+    hazard.event_name = [s.replace('1995241N11333', '1995240N11337') for s in hazard.event_name]
+    hazard.event_name = [s.replace('2013210N13122', '2013210N13123') for s in hazard.event_name]
+    hazard.event_name = [s.replace('2015047S12140', '2015045S12145') for s in hazard.event_name]
+    hazard.event_name = [s.replace('2017061S11063', '2017061S11061') for s in hazard.event_name]
+    hazard.event_name = [s.replace('2017082S14152', '2017081S13152') for s in hazard.event_name]    
+    #hazard.event_name = [s.replace('1992338S04173', '1992338S04173') for s in hazard.event_name]
+    hazard.event_name = [s.replace('2003196N05150', '2003196N04150') for s in hazard.event_name]
+    #hazard.event_name = [s.replace('2003240N15329', '2003240N15329') for s in hazard.event_name]  
 
     return hazard, exposure
 
@@ -157,7 +171,7 @@ def fix_data(df, mismatches=[], year_range=[1980, 2017], save_path=None, rm_mism
                 df.loc[df.index==ind, 'emdat_impact'] * gdp_twn[2014] / \
                 gdp_twn[df.loc[df.index==ind, 'year'].values[0]]
 
-    df['log_ratio'] = np.log(np.asarray(df['climada_impact']/df['emdat_impact_scaled']).astype(np.float64))
+    df['log_ratio'] = np.log(np.asarray(df['climada_impact'].replace(0, np.nan)/df['emdat_impact_scaled']).astype(np.float64))
 
     # drop mismatched events (as listed in MISMATCHES):
     if rm_mismatches:
@@ -167,118 +181,14 @@ def fix_data(df, mismatches=[], year_range=[1980, 2017], save_path=None, rm_mism
     if save_path and isinstance(save_path, str):
         df.to_csv(save_path, index=False)
     return df
-    
-def country_vulnerability_analysis(exposures, hazard, countries_list, region_ids, \
-                     emdat_csv, emdat_map, res_dir, res_str, res_arcsec, parameters=(25.7, 49, 1), \
-                     yearly_impact=False, hazard_type='TC', year_range = [1980, 2017], ref_year=2014):
-    """CALIB2: matched events EM-DAT / CLIMADA
-    for country:
-        impact with full hazard and national exposure
-    
-    """
-    print('------ country_vulnerability_analysis ------')
-    fail_list = list()
-    if not region_ids:
-        region_ids = dict()
-        region_ids['ALL'] = countries_list
-        regions_list = ['ALL'] * len(countries_list)
-    if not countries_list:
-        countries_list = list()
-        regions_list = list()
-        for reg in region_ids:
-            countries_list = countries_list + region_ids[reg]
-            regions_list = regions_list + [reg] * len(region_ids[reg])
-    results = pd.DataFrame()
-    emdat_map = pd.read_csv(emdat_map, encoding="ISO-8859-1", header=0)
-    for c_index, country in enumerate(countries_list):
-        print('------ ' + str(c_index) + ': ' + country + ' ------')
-        if yearly_impact:
-            """years = np.arange(min(year_range), max(year_range)+1, 1)
-            em_data = emdat_impact_yearlysum([country], hazard.tag.haz_type, \
-                                         EMDAT_CSV, year_range=year_range, \
-                                         reference_year=REF_YEAR)"""
-            print('country_vulnerability_analysis: Yearly damages not yet implemented. Process aborted.')
-            results = []
-            break
-        else:
-            try:
-                em_data = emdat_impact_event([country], hazard.tag.haz_type, \
-                                         emdat_csv, year_range=year_range, \
-                                         reference_year=ref_year, target_version=2018)
-            except TypeError:
-                em_data = emdat_impact_event([country], hazard.tag.haz_type, \
-                                         emdat_csv, year_range=year_range, \
-                                         reference_year=ref_year)
-            if em_data.empty:
-                continue
-            if_tc = IFTropCyclone()
-            if_tc.haz_type = hazard_type
-            if_tc.id = 1
-            if_tc.set_emanuel_usa(v_thresh=parameters[0], \
-                                  v_half=parameters[0]+parameters[1], \
-                                  scale=parameters[2])
-            IFS = ImpactFuncSet()
-            IFS.append(if_tc)
-            imp_ = Impact()
-            cntry_iso3 = int(iso_cntry.get(country).numeric)
-            exp_ = exposures.loc[exposures.region_id==cntry_iso3]
-            try:
-                imp_.calc(exp_, IFS, hazard)
-            except ValueError as error_msg:
-                print('Impact calculation failed for country: ' + country + ' :')
-                print(error_msg)
-                fail_list.append(str(cntry_iso3))
-                continue
-            df = pd.DataFrame(index=np.arange(0, len(imp_.event_id)), \
-                              columns=['country', 'region_id', 'cal_region', \
-                                       'year', 'EM_ID', \
-                                       'ibtracsID', 'emdat_impact', \
-                                       'reference_year', 'emdat_impact_scaled', \
-                                       'climada_impact', 'gdp_pc', 'v_thresh', 'v_half', 'scale'])
-            for index, event in enumerate(imp_.event_name):
-                df.loc[index, 'ibtracsID'] = event
-                df.loc[index, 'region_id'] = cntry_iso3
-                df.loc[index, 'country'] = iso_cntry.get(country).alpha3
-                df.loc[index, 'cal_region'] = regions_list[c_index]
-                df.loc[index, 'reference_year'] = ref_year
-                df.loc[index, 'climada_impact'] = imp_.at_event[index]
-                df.loc[index, 'EM_ID'] = 'NONE'
-                df.loc[index, 'year'] = int(event[0:4])
-                df.loc[index, 'v_thresh'] = parameters[0]
-                df.loc[index, 'v_half'] = parameters[0]+parameters[1]
-                df.loc[index, 'scale'] = parameters[2]
-                if emdat_map['EM_ID'].loc[emdat_map['ibtracsID'].isin([event])].size > 0:
-                    df.loc[index, 'EM_ID'] = emdat_map['EM_ID'].loc[emdat_map['ibtracsID'].isin([event])].values[0]
-                    if em_data["Total damage ('000 US$)"].iloc[em_data.loc[em_data['Disaster No.'].isin([df.loc[index, 'EM_ID']])].index].size>0:
-                        df.loc[index, 'emdat_impact'] = em_data["Total damage ('000 US$)"].iloc[em_data.loc[em_data['Disaster No.'].isin([df.loc[index, 'EM_ID']])].index].values[0]
-                        df.loc[index, 'emdat_impact_scaled'] = em_data["Total damage ('000 US$) scaled"].iloc[em_data.loc[em_data['Disaster No.'].isin([df.loc[index, 'EM_ID']])].index].values[0]
-                        try:
-                            df.loc[index, 'gdp_pc'] = gdp(iso_cntry.get(country).alpha3, df.loc[index, 'year'], per_capita=1)[1]
-                        except Exception as error_msg:
-                            print('GDP p.c. extraction failed for country: ' + str(cntry_iso3) + ' :')
-                            print(error_msg)
-                            fail_list.append(str(cntry_iso3) + ' (gdp)')
-
-        # Filter results:
-        df = df[df.emdat_impact.notnull()] # eliminate NONE and nan
-        df = df[df.climada_impact>0]
-        df = df[df.emdat_impact>0]
-        df = df[df.year<=max(year_range)]
-        df = df[df.year>=min(year_range)]
-        results = results.append(df)
-        results = results.reset_index(drop=True)
-        results.to_csv(os.path.join(res_dir, res_str % (res_arcsec, ref_year, hazard_type, \
-                       'event_analysis_filter_stepwise' + str(parameters[0]+parameters[1]),\
-                       iso_cntry.get(country).alpha3, 'csv')), index=False)
-    return results, fail_list
 
 def country_calib_3(exposures, hazard, results_CVA_ratio, regions_dict, \
-                     parameter_space = \
-                     [np.array(25.7), \
-                     np.array([39, 49, 59, 99]), \
-                     np.array(1)], \
-                     yearly_impact=False, \
-                     year_range=[1980, 2017]):
+                      parameter_space = \
+                      [np.array(25.7), \
+                      np.array([39, 49, 59, 99]), \
+                      np.array(1)], \
+                      yearly_impact=False, \
+                      year_range=[1980, 2017]):
     """Loop through all regions/countries/matched events and range of v_half 
     Returns results, DataFrame which is ammended from input from CLAIB2 called
     results_CVA_ratio
@@ -299,8 +209,9 @@ def country_calib_3(exposures, hazard, results_CVA_ratio, regions_dict, \
             print('------ ' + reg + ': ' + str(c_index) + ' - ' + country + ' ------')
             if not country in list(results_CVA_ratio.country):
                 continue
-            cntry_iso3 = int(iso_cntry.get(country).numeric)
-            exp_ = exposures.loc[exposures.region_id==cntry_iso3]
+            cntry_iso3 = u_coord.country_to_iso(country, representation='numeric')
+            exp_ = LitPop()
+            exp_.gdf = exposures.gdf[exposures.gdf.region_id==cntry_iso3]
             # loops: parameters for impact function
 
             for param0 in parameter_space[0]:
@@ -319,9 +230,8 @@ def country_calib_3(exposures, hazard, results_CVA_ratio, regions_dict, \
                                               v_half=param0+param1, scale=param2)
                         IFS.clear()
                         IFS.append(if_tc)
-                        imp_ = Impact()
                         try:
-                            imp_.calc(exp_, IFS, hazard)
+                            imp_ = ImpactCalc(exp_, IFS, hazard).impact()
                         except ValueError as error_msg:
                             print('Impact calculation failed for country: ' + country + ' :')
                             print(error_msg)
@@ -338,21 +248,23 @@ def country_calib_3(exposures, hazard, results_CVA_ratio, regions_dict, \
                                 # print('+++ ' + event + ': ' + str(imp_.at_event[index]))
 
                                 results_tmp.loc[results_tmp.ibtracsID==event, 'climada_impact'] = imp_.at_event[index]
-                        results = results.append(results_tmp)         
-            results = results.reset_index(drop=True)
+                        results = pd.concat([results, results_tmp], ignore_index=True)
+                        #results = results.append(results_tmp)         
+            #results = results.reset_index(drop=True)
     return results, fail_list
 
 def compute_metric_min(results_CALIB3, metric='RMSF', save=False):
     """Find RMSF or RMSD for each v_half/region combi
     Required by CALIB 4"""
     if metric=='RMSF':
-       results_CALIB3['log_ratio'] = np.log(np.asarray(results_CALIB3['climada_impact']/results_CALIB3['emdat_impact_scaled']).astype(np.float64)) 
+        results_CALIB3['log_ratio'] = np.log(np.asarray(results_CALIB3['climada_impact'].replace(0, np.nan)/results_CALIB3['emdat_impact_scaled']).astype(np.float64))
     elif (metric=='RMSD' or metric=='RMSE'):
         metric = 'RMSD'
-        results_CALIB3['log_ratio'] = np.log(np.asarray(results_CALIB3['climada_impact']/results_CALIB3['emdat_impact_scaled']).astype(np.float64))
+        results_CALIB3['log_ratio'] = np.log(np.asarray(results_CALIB3['climada_impact'].replace(0, np.nan)/results_CALIB3['emdat_impact_scaled']).astype(np.float64))
     else:
         raise ValueError('Metric %s not implemented. Set metric to RMSD or RMSF.' %(metric))
-        # results_CALIB3['deviation'] = np.log(np.asarray(results_CALIB3['climada_impact']/results_CALIB3['emdat_impact_scaled']).astype(np.float64))
+        # results_CALIB3['deviation'] = np.log(np.asarray(results_CALIB3['climada_impact'].replace(0, np.nan)/results_CALIB3['emdat_impact_scaled']).astype(np.float64))
+    #results_CALIB3.log_ratio[isinf(results_CALIB3.log_ratio)]=np.nan
     rows_list = []
     for idx_reg, region in enumerate(results_CALIB3.cal_region2.unique()):
         df = results_CALIB3.loc[results_CALIB3.cal_region2==region]
@@ -442,7 +354,7 @@ def compute_vhalf_total_impact(results_CALIB3, scaling_emdat=1, save=True):
 
 def compute_global_rmsf(results_CALIB3, min_rmsf, v_halfs):
     """Find global RMSF for list of v_half values and for regional v_half set"""
-    results_CALIB3['log_ratio'] = np.log(np.asarray(results_CALIB3['climada_impact']/results_CALIB3['emdat_impact_scaled']).astype(np.float64))
+    results_CALIB3['log_ratio'] = np.log(np.asarray(results_CALIB3['climada_impact'].replace(0, np.nan)/results_CALIB3['emdat_impact_scaled']).astype(np.float64))
     reg_log_ratios = []
     rmsf_ = pd.DataFrame(columns=['regional IFs'] + v_halfs, index=['global RMSF'])
     rmsf_reg_control = dict()
@@ -469,7 +381,7 @@ def closest_ratio(results_CALIB3, v0, v_half_range, scale, target=0):
         if columnname in results_CALIB3.columns:
             results_CALIB3 = results_CALIB3.drop(columns=columnname)
     results_CALIB3['unique_ID'] = results_CALIB3.EM_ID + results_CALIB3.country
-    results_CALIB3['log_ratio'] = np.log(np.asarray(results_CALIB3['climada_impact']/ \
+    results_CALIB3['log_ratio'] = np.log(np.asarray(results_CALIB3['climada_impact'].replace(0, np.nan)/ \
                   results_CALIB3['emdat_impact_scaled']).astype(np.float64))
     unique_IDs = np.unique(results_CALIB3['unique_ID'])
     results = pd.DataFrame(index=np.arange(0,len(unique_IDs)), \
@@ -478,7 +390,7 @@ def closest_ratio(results_CALIB3, v0, v_half_range, scale, target=0):
     
     for index, unique_ID in enumerate(unique_IDs):
         df_tmp = results_CALIB3.loc[results_CALIB3.unique_ID==unique_ID]
-        results.loc[index] = df_tmp.loc[np.argmin(np.abs(df_tmp.log_ratio - target))]
+        results.loc[index] = df_tmp.iloc[np.argmin(np.abs(df_tmp.log_ratio - target))]
     return results
 
 def boxplot_sorted(df, by, column, rot=0, ax=None, log=True):
@@ -563,6 +475,7 @@ def fill_result_table(regions_short, rmsf_results, min_rmsf, tot_results, best_t
                 best_tot_vhalf.loc[best_tot_vhalf.cal_region2==reg, 'total_impact_CLIMADA'].values[0] / \
                 best_tot_vhalf.loc[best_tot_vhalf.cal_region2==reg, 'total_impact_EMDAT_scaled'].values[0]
     
+            # question SM: why 74.00? where does this number come from?
             result_table.loc[result_table.region==reg, 'N'] = \
                 rmsf_results.loc[(np.round(rmsf_results.v_half, decimals=2)==74.00) & (rmsf_results.cal_region2==reg), 'N'].values[0]
             result_table.loc[result_table.region==reg, 'def_RMSF'] = \

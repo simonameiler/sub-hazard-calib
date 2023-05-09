@@ -31,6 +31,7 @@ description: Configuration script for tropical cyclone (TC) impact function cali
 
 import os
 import numpy as np
+from pathlib import Path
 
 from climada.util.constants import SYSTEM_DIR
 
@@ -59,28 +60,24 @@ v_half_range = np.arange(v0[0]+.1, v0[0]+300.1, v_step) # IMPACT FUNCTION PARAME
 """
 
 # Set directories (different on cluster):
-if 'cluster' in SYSTEM_DIR:
-    on_cluster = True
-    DATA_DIR = '/<SET PATH>' # set data directory on cluster
-    HAZARD_DIR = DATA_DIR + '/tc_tracks'
-    TRACK_DIR = HAZARD_DIR
-    ENTITY_DIR = DATA_DIR + '/litpop'
-    RES_DIR = DATA_DIR + '/calibration/20191203'
-else:
-    on_cluster = False
-    DATA_DIR = os.path.join(os.path.abspath(os.path.dirname(__file__)), "../data")
-    HAZARD_DIR = os.path.join(SYSTEM_DIR, 'hazard') # hazard data directory
-    TRACK_DIR = DATA_DIR # os.path.join(SYSTEM_DIR, 'data_master_sl_short') #set tc track data directory
-    ENTITY_DIR = os.path.join(SYSTEM_DIR, 'litpop') # exposure data directory
-    RES_DIR = os.path.join(DATA_DIR, 'results') #!!! results. Change according to your file structure.
+# if 'cluster' in SYSTEM_DIR:
+#     on_cluster = True
+#     DATA_DIR = '/<SET PATH>' # set data directory on cluster
+#     HAZARD_DIR = DATA_DIR + '/tc_tracks'
+#     TRACK_DIR = HAZARD_DIR
+#     ENTITY_DIR = DATA_DIR + '/litpop'
+#     RES_DIR = DATA_DIR + '/calibration/20191203'
+# else:
+on_cluster = False
+DATA_DIR = Path('/Users/simomnameiler/Documents/WCR/Scripts/sub-hazard-calib/data')
+RES_DIR = os.path.join(SYSTEM_DIR, 'results', 'calib') #!!! results. Change according to your file structure.
 
-TRACK_FOLDER = 'ibtracs_calibration' #!!! subfolder in TRACK_DIR with subset of tracks used. IBTrACS need to be downloaded seperately from data provider.
 EMDAT_CSV = os.path.join(DATA_DIR, '201810_emdat_TC_1980-2017.csv') #!!! Change accoridngly. EM-DAT data needs to be downloaded seperately from emdat.be
 EMDAT_MAP = os.path.join(DATA_DIR, '202002_TC_event_assignment.csv')
 
 ### Basic configuration of model setup:
 version_date = '2019-04-05' # set reference date for versioning
-INIT_HAZARD = True # set to TRUE for first init of hazard set, later to FALSE  to reuse saved hazard set
+INIT_HAZARD = False # set to TRUE for first init of hazard set, later to FALSE  to reuse saved hazard set
 REF_YEAR = 2014 # Reference year used to initiate exposure data and for damage normalization, default: 2014
 YEAR_RANGE = [1980, 2017] # Range of years to be considered for calibration and analysis (default: [1980, 2017])
 RES_ARCSEC = 300 # Resoultion of hazard and exposure in arc seconds, default: 300 arcsec

@@ -31,7 +31,7 @@ import pickle
 from datetime import datetime
 import pandas as pd
 import numpy as np
-from iso3166 import countries as iso_cntry
+#from iso3166 import countries as iso_cntry
 from cartopy.io import shapereader
 import shapefile
 

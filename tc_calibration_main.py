@@ -39,23 +39,31 @@ import os
 import numpy as np
 import pandas as pd
 from scipy import stats
-from iso3166 import countries as iso_cntry
+
+import sys
+sys.path.append("/Users/simonameiler/Documents/WCR/Scripts/sub-hazard_calib")
+#from iso3166 import countries as iso_cntry
 
 from climada.engine import Impact
 from climada.entity import IFTropCyclone, ImpactFuncSet
+from climada.util.constants import SYSTEM_DIR
 #from climada.entity.impact_funcs.trop_cyclone import IFSTropCyclone
-from if_trop_cyclone_stable_202006 import IFSTropCyclone, IFTropCyclone # stable version
+#from if_trop_cyclone_stable_202006 import IFSTropCyclone, IFTropCyclone # stable version
 # from climada.engine.impact_data import emdat_countries_by_hazard, emdat_to_impact
-from impact_data_stable_202006 import emdat_countries_by_hazard, emdat_to_impact # stable version
+#from impact_data_stable_202006 import emdat_countries_by_hazard, emdat_to_impact # stable version
+
+# import sys
+# sys.path.append("/Users/simonameiler/Documents/WCR/Scripts/sub-hazard_calib")
 import tc_calibration_functions as tc_cal
 
+
 """ Variable initiation """
-from tc_calibration_config import CALIB, DATA_DIR, EMDAT_CSV, EMDAT_MAP, \
-    ENTITY_DIR, ENTITY_STR, HAZ, HAZARD_DIR, HAZARD_STR, REF_YEAR, \
-    RES_ARCSEC, RES_DIR, RES_STR, TRACK_DIR, TRACK_FOLDER, YEAR_RANGE, \
+from tc_calibration_config import CALIB, DATA_DIR, EMDAT_CSV, \
+    HAZ, REF_YEAR, \
+    RES_ARCSEC, RES_DIR, RES_STR, YEAR_RANGE, \
     basins_short, def_log_ratio_threshold, \
     drop_excluded_cntries, exclude_cntries, keep_variables, \
-    make_plots, mismatched_emdat_events, new_reg_names, region_ids_cal, \
+    mismatched_emdat_events, new_reg_names, region_ids_cal, \
     regions_short, scale, v0, v_half_range
 
 # init dict with countries by basin:
@@ -73,37 +81,19 @@ if drop_excluded_cntries:
             if cntry_ex in region_ids_cal[reg]:
                 region_ids_cal[reg].remove(cntry_ex)
 
-
-if (1 in CALIB or not (keep_variables and 'hazard' in locals() and 'exp_coast' in locals())) and not -1 in CALIB:
-    """ CALIB 1: Loading or initiating HAZARD and EXPOSURE sets: """
-    print('\n...........................................................\n')
-    print('CALIB 1: Loading or initiating HAZARD and EXPOSURE sets')
-    print('.............................................................')
-    hazard, exp_coast = tc_cal.prepare_calib_data(sub_haz='wind')
-
-else:
-    print("--------Keeping existing variables: hazard, exp_coast-------------")
-
-if 2 in CALIB:
-
+###############################################################################
+# load hazard and exposure
+hazard, exp_coast = tc_cal.prepare_calib_data(sub_haz='wind')
+# from climada.hazard import Centroids, Hazard
+# hazard = Hazard.from_hdf5(SYSTEM_DIR/"hazard"/"TC_global_0300as_IBTrACS.hdf5")
 
 if 3 in CALIB:
     """ Core calibration (slow!)
     Loop over v_half_range to compute event damage (SED) and ratio EDR for each 
     matched event."""
-    print('\n...........................................................\n')
-    print('Calibration step CALIB 3')
-    print('.............................................................')
-    if (not 'results_CVA_ratio' in locals()) or not keep_variables:
-        try:
-            results_CVA_ratio = pd.read_csv(os.path.join(RES_DIR, RES_STR % (RES_ARCSEC, \
-                              REF_YEAR, HAZ, 'event_analysis_ratio', 'ALL', 'csv')),\
-                                          encoding="ISO-8859-1", header=0)
-            results_CVA_ratio.shape
-        except FileNotFoundError:
-            print('ERROR: File not found: ' + os.path.join(RES_DIR, RES_STR % (RES_ARCSEC, \
-                              REF_YEAR, HAZ, 'event_analysis_ratio', 'ALL', 'csv')))
 
+    # read csv file from SYSTEM_DIR with EMDAT/IBTRACS matching (as suggested by TV)
+    results_CVA_ratio = pd.read_csv(SYSTEM_DIR/"tc_impf_cal_v01_EDR.csv")
     results_CALIB3 = pd.DataFrame() # init results DataFRame
     # loop over regions:
     for cal_reg in regions_short:
@@ -124,8 +114,9 @@ if 3 in CALIB:
         results_CALIB3_tmp.to_csv(os.path.join(RES_DIR, RES_STR % (RES_ARCSEC, REF_YEAR, \
                                 HAZ, 'event_CALIB3_v_half', cal_reg, 'csv')), index=False)
         # append results DataFrame an clean up:
-        results_CALIB3 = results_CALIB3.append(results_CALIB3_tmp)
-        results_CALIB3 = results_CALIB3.reset_index(drop=True)
+        #results_CALIB3 = results_CALIB3.append(results_CALIB3_tmp)
+        results_CALIB3 = pd.concat([results_CALIB3, results_CALIB3_tmp], ignore_index=True)
+        #results_CALIB3 = results_CALIB3.reset_index(drop=True)
         for cntry_ex in exclude_cntries: # change cal_region2 of excluded countries to 'None'
             results_CALIB3.loc[results_CALIB3['country']==cntry_ex, 'cal_region2'] = 'None'
         # ensure backward compatibility:
@@ -139,6 +130,9 @@ if 3 in CALIB:
         results_CALIB3.to_csv(os.path.join(RES_DIR, RES_STR % (RES_ARCSEC, REF_YEAR, \
                                     HAZ, 'event_CALIB3_v_half', 'all', 'csv')), index=False)
 
+# note 4.5.3023 - there are a few IBTrACS TCs with new IDs since Sam's work:
+    # IB_list = np.unique(results_CALIB3.ibtracsID[results_CALIB3.log_ratio.isna()])
+    # update these? and, are the nan values just because these storms are not in our record or because the impact is 0?
 
 if 4 in CALIB:
     """Optimization: Compute cost functions and find optimized v_half for each cost function and region,
@@ -156,35 +150,35 @@ if 4 in CALIB:
         except FileNotFoundError:
             print('ERROR: File not found: ' + os.path.join(RES_DIR, RES_STR % (RES_ARCSEC, REF_YEAR, HAZ, 'event_CALIB3_v_half', 'all', 'csv')))
 
-    print('Post-processing CALIB3 results...')
-    # Clean up and potential corrections in calibration regions:
-    print('events in df: %i' %(int(results_CALIB3.shape[0]/v_half_range.size)))
-    if not 'None' in list(results_CALIB3.cal_region2):
-        for cntry_ex in exclude_cntries: # change cal_region2 of excluded countries to 'None'
-            results_CALIB3.loc[results_CALIB3['country']==cntry_ex, 'cal_region2'] = 'None'
-        results_CALIB3.to_csv(os.path.join(RES_DIR, RES_STR % (RES_ARCSEC, REF_YEAR, HAZ, 'event_CALIB3_v_half', 'all', 'csv')), index=False)
-    if new_reg_names and not 'OC' in list(results_CALIB3.cal_region2):
-        results_CALIB3 = tc_cal.update_regions(results_CALIB3, region_ids_cal)[0]
-        # results_CALIB3.to_csv(os.path.join(RES_DIR, RES_STR % (RES_ARCSEC, REF_YEAR, HAZ, 'event_CALIB3_v_half', 'all', 'csv')), index=False)
-        results_CALIB3 = tc_cal.fix_data(results_CALIB3, mismatches=mismatched_emdat_events, year_range=YEAR_RANGE, \
-                                          save_path=os.path.join(RES_DIR, RES_STR % (RES_ARCSEC, REF_YEAR, HAZ, 'event_CALIB3_v_half', 'all', 'csv')), rm_mismatches=False)
-    print('events in df: %i' %(int(results_CALIB3.shape[0]/v_half_range.size)))
-    results_CALIB3 = tc_cal.fix_data(results_CALIB3, mismatches=mismatched_emdat_events, year_range=YEAR_RANGE, \
-                                      save_path=None, rm_mismatches=True)
-    print('events in df after removing mismatches: %i' %(int(results_CALIB3.shape[0]/v_half_range.size)))
-    if drop_excluded_cntries:
-        results_CALIB3 = results_CALIB3[results_CALIB3.cal_region2!='None']
-    print('events in df after dropping excluded countries: %i' %(int(results_CALIB3.shape[0]/v_half_range.size)))
-    print('Find best fit to log(ratio)=0 for each event/country combo...')    
-    # drop events with log of ratio (EDR) with default IF above or below threshold
-    if def_log_ratio_threshold:
-        rm_list_dict = dict()
-        results_CALIB3_default_IF = results_CALIB3.loc[np.round(results_CALIB3.v_half, decimals=2)==74.70]
-        rm_list_dict['EM_ID'] = list(results_CALIB3_default_IF.loc[(results_CALIB3_default_IF.log_ratio>=def_log_ratio_threshold) | (results_CALIB3_default_IF.log_ratio<=-def_log_ratio_threshold), 'EM_ID'].values)
-        rm_list_dict['country'] = list(results_CALIB3_default_IF.loc[(results_CALIB3_default_IF.log_ratio>=def_log_ratio_threshold) | (results_CALIB3_default_IF.log_ratio<=-def_log_ratio_threshold), 'country'].values)
-        for idx, _ in enumerate(rm_list_dict['EM_ID']):
-            results_CALIB3 = results_CALIB3[(results_CALIB3.EM_ID!=rm_list_dict['EM_ID'][idx]) | (results_CALIB3.country!=rm_list_dict['country'][idx])]
-    print('events in df after applying ratio threshold: %i' %(int(results_CALIB3.shape[0]/v_half_range.size)))
+    # print('Post-processing CALIB3 results...')
+    # # Clean up and potential corrections in calibration regions:
+    # print('events in df: %i' %(int(results_CALIB3.shape[0]/v_half_range.size)))
+    # if not 'None' in list(results_CALIB3.cal_region2):
+    #     for cntry_ex in exclude_cntries: # change cal_region2 of excluded countries to 'None'
+    #         results_CALIB3.loc[results_CALIB3['country']==cntry_ex, 'cal_region2'] = 'None'
+    #     results_CALIB3.to_csv(os.path.join(RES_DIR, RES_STR % (RES_ARCSEC, REF_YEAR, HAZ, 'event_CALIB3_v_half', 'all', 'csv')), index=False)
+    # if new_reg_names and not 'OC' in list(results_CALIB3.cal_region2):
+    #     results_CALIB3 = tc_cal.update_regions(results_CALIB3, region_ids_cal)[0]
+    #     # results_CALIB3.to_csv(os.path.join(RES_DIR, RES_STR % (RES_ARCSEC, REF_YEAR, HAZ, 'event_CALIB3_v_half', 'all', 'csv')), index=False)
+    #     results_CALIB3 = tc_cal.fix_data(results_CALIB3, mismatches=mismatched_emdat_events, year_range=YEAR_RANGE, \
+    #                                       save_path=os.path.join(RES_DIR, RES_STR % (RES_ARCSEC, REF_YEAR, HAZ, 'event_CALIB3_v_half', 'all', 'csv')), rm_mismatches=False)
+    # print('events in df: %i' %(int(results_CALIB3.shape[0]/v_half_range.size)))
+    # results_CALIB3 = tc_cal.fix_data(results_CALIB3, mismatches=mismatched_emdat_events, year_range=YEAR_RANGE, \
+    #                                   save_path=None, rm_mismatches=True)
+    # print('events in df after removing mismatches: %i' %(int(results_CALIB3.shape[0]/v_half_range.size)))
+    # if drop_excluded_cntries:
+    #     results_CALIB3 = results_CALIB3[results_CALIB3.cal_region2!='None']
+    # print('events in df after dropping excluded countries: %i' %(int(results_CALIB3.shape[0]/v_half_range.size)))
+    # print('Find best fit to log(ratio)=0 for each event/country combo...')    
+    # # drop events with log of ratio (EDR) with default IF above or below threshold
+    # if def_log_ratio_threshold:
+    #     rm_list_dict = dict()
+    #     results_CALIB3_default_IF = results_CALIB3.loc[np.round(results_CALIB3.v_half, decimals=2)==74.70]
+    #     rm_list_dict['EM_ID'] = list(results_CALIB3_default_IF.loc[(results_CALIB3_default_IF.log_ratio>=def_log_ratio_threshold) | (results_CALIB3_default_IF.log_ratio<=-def_log_ratio_threshold), 'EM_ID'].values)
+    #     rm_list_dict['country'] = list(results_CALIB3_default_IF.loc[(results_CALIB3_default_IF.log_ratio>=def_log_ratio_threshold) | (results_CALIB3_default_IF.log_ratio<=-def_log_ratio_threshold), 'country'].values)
+    #     for idx, _ in enumerate(rm_list_dict['EM_ID']):
+    #         results_CALIB3 = results_CALIB3[(results_CALIB3.EM_ID!=rm_list_dict['EM_ID'][idx]) | (results_CALIB3.country!=rm_list_dict['country'][idx])]
+    # print('events in df after applying ratio threshold: %i' %(int(results_CALIB3.shape[0]/v_half_range.size)))
 
     ### Start of OPTIMIZATION:
     # call function to get v_half with EDR closest to one (SED=NRD) for each event:
@@ -192,7 +186,7 @@ if 4 in CALIB:
     results_closest_ratio.reset_index(drop=True)
     for cntry_ex in exclude_cntries: # change cal_region2 of excluded countries to 'None'
         results_closest_ratio.loc[results_closest_ratio['country']==cntry_ex, 'cal_region2'] = 'None'
-    results_closest_ratio = tc_cal.get_associated_disasters(results_closest_ratio, EMDAT_CSV)
+    #results_closest_ratio = tc_cal.get_associated_disasters(results_closest_ratio, EMDAT_CSV)
     results_closest_ratio = tc_cal.fix_data(results_closest_ratio, mismatches=mismatched_emdat_events, \
                                         year_range=YEAR_RANGE, rm_mismatches=True, \
                                         save_path=os.path.join(RES_DIR, RES_STR % (RES_ARCSEC, \
